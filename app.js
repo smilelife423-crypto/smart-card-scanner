@@ -149,27 +149,26 @@ const el = {
 
 // Initialize Application
 document.addEventListener('DOMContentLoaded', async () => {
-    lucide.createIcons();
+    if (typeof lucide !== 'undefined') {
+        lucide.createIcons();
+    }
     
     try {
         await state.db.init();
         await updateHistoryList();
     } catch (e) {
         console.error('IndexedDB initialization failed', e);
-        alert('データベースの初期化に失敗しました。');
     }
 
-    // カメラの初期化
+    // カメラシステムの初期化
     await initCamera();
 
     el.selectCamera.addEventListener('change', (e) => {
         if (e.target.value) {
             const selectedOption = el.selectCamera.options[el.selectCamera.selectedIndex];
             const label = selectedOption ? selectedOption.text.toLowerCase() : '';
-            // スマホのアウトカメラ（背面）の時は反転させない
-            state.isMirrored = label.includes('front') || label.includes('internal') || label.includes('インカメラ') || label.includes('face');
+            state.isMirrored = label.includes('front') || label.includes('internal') || label.includes('イン') || label.includes('face');
             updateMirrorState();
-            
             startCamera(e.target.value);
         }
     });
@@ -196,28 +195,30 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 });
 
-// Camera System (★大幅に強化・高画質化)
+// ★エラーの出にくい背面カメラ強制ロジックに修正
 async function initCamera() {
     try {
-        // iOS/Android向けの設定を含む初期リクエスト
-        const initialConstraints = { 
-            video: { facingMode: { ideal: "environment" } } 
-        };
-        const tempStream = await navigator.mediaDevices.getUserMedia(initialConstraints);
+        setCameraStatus(false, 'カメラを初期化中...');
+        
+        // スマホに「カメラ権限」を要求する（標準的な指定方法）
+        const tempStream = await navigator.mediaDevices.getUserMedia({ 
+            video: { facingMode: "environment" } 
+        });
         tempStream.getTracks().forEach(track => track.stop());
 
+        // デバイス一覧を取得
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = devices.filter(device => device.kind === 'videoinput');
 
         el.selectCamera.innerHTML = '';
         if (videoDevices.length === 0) {
-            setCameraStatus(false, 'カメラが見つかりません');
-            el.btnCapture.disabled = true;
+            setCameraStatus(false, '有効なカメラが見つかりません');
             return;
         }
 
-        // 背面カメラ(environment/back/outer)を優先的に探す
         let targetDeviceId = null;
+
+        // 背面カメラに該当するキーワードを持つものを探す
         videoDevices.forEach(device => {
             const option = document.createElement('option');
             option.value = device.deviceId;
@@ -230,25 +231,31 @@ async function initCamera() {
             }
         });
 
-        // 背面カメラが見つからなければ最後のデバイス（スマホは大体最後が背面）を選択
+        // キーワードで見つからなければ、スマホの仕様上「最後」のカメラを背面として扱う
         if (!targetDeviceId && videoDevices.length > 0) {
             targetDeviceId = videoDevices[videoDevices.length - 1].deviceId;
-        } else if (!targetDeviceId) {
-            targetDeviceId = videoDevices[0].deviceId;
         }
 
         el.selectCamera.value = targetDeviceId;
         
-        // 背面カメラならミラーリングをオフにする
-        const selectedOption = el.selectCamera.options[el.selectCamera.selectedIndex];
-        const label = selectedOption ? selectedOption.text.toLowerCase() : '';
-        state.isMirrored = label.includes('front') || label.includes('internal') || label.includes('インカメラ');
+        // 背面カメラなら反転（ミラー）をオフにする
+        state.isMirrored = false;
         updateMirrorState();
 
+        // カメラ起動処理へ
         await startCamera(targetDeviceId);
     } catch (e) {
-        console.error('Camera access denied or failed:', e);
-        setCameraStatus(false, 'カメラへのアクセスが拒否されました');
+        console.error('Camera init failed, trying direct stream...', e);
+        // デバイス名が取得できないブラウザ向けの最終フォールバック
+        try {
+            state.localStream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } } 
+            });
+            el.video.srcObject = state.localStream;
+            setCameraStatus(true, 'カメラ動作中 (標準モード)');
+        } catch (err) {
+            setCameraStatus(false, 'アクセスが拒否されました。設定を確認してください。');
+        }
     }
 }
 
@@ -257,13 +264,11 @@ async function startCamera(deviceId) {
         state.localStream.getTracks().forEach(track => track.stop());
     }
 
-    // ★スマホのアウトカメラで最大限の高画質（4Kまたは1080p）を出すための設定
     const constraints = {
         video: {
             deviceId: deviceId ? { exact: deviceId } : undefined,
-            width: { ideal: 3840, max: 3840 },  // 4Kを理想とし、端末の最大に合わせる
-            height: { ideal: 2160, max: 2160 },
-            frameRate: { ideal: 30 }
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
         },
         audio: false
     };
@@ -271,8 +276,11 @@ async function startCamera(deviceId) {
     try {
         state.localStream = await navigator.mediaDevices.getUserMedia(constraints);
         el.video.srcObject = state.localStream;
-        setCameraStatus(true, 'カメラ動作中 (高解像度モード)');
+        setCameraStatus(true, '背面カメラ起動完了');
     } catch (e) {
-        console.error('Failed to start camera with standard resolution, retrying fallback...', e);
-        // 万が一超高解像度でエラーが出た場合のフォールバック（自動調整）
+        console.error('Resolution failed, trying auto...', e);
         try {
+            state.localStream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: deviceId } });
+            el.video.srcObject = state.localStream;
+            setCameraStatus(true, '背面カメラ起動完了 (自動解像度)');
+        } catch (err) {
