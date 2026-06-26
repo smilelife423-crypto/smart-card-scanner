@@ -52,39 +52,92 @@ async function captureAndProcessOCR() {
     await runOCR(state.currentCaptureBase64);
 }
 async function runOCR(src) {
-    el.progressContainer.style.display = 'block'; el.progressStatus.textContent = 'OCR初期化中...'; el.progressPercent.textContent = '10%'; el.progressBar.style.width = '10%';
+    el.progressContainer.style.display = 'block';
+    el.progressStatus.textContent = 'OCR初期化中...';
+    el.progressPercent.textContent = '10%';
+    el.progressBar.style.width = '10%';
     try {
         if (!state.tesseractWorker) {
             state.tesseractWorker = await Tesseract.createWorker('jpn+eng', 1, {
-                workerPath: 'https://unpkg.com', corePath: 'https://unpkg.com',
-                logger: m => { if (m.status === 'recognizing text') { const p = Math.floor(m.progress * 100); el.progressStatus.textContent = '文字を認識中...'; el.progressPercent.textContent = `${p}%`; el.progressBar.style.width = `${p}%`; } }
+                workerPath: 'https://cloudflare.com',
+                corePath: 'https://cloudflare.com',
+                logger: m => {
+                    if (m.status === 'recognizing text') {
+                        const p = Math.floor(m.progress * 100);
+                        el.progressStatus.textContent = '文字を認識中...';
+                        el.progressPercent.textContent = `${p}%`;
+                        el.progressBar.style.width = `${p}%`;
+                    }
+                }
             });
         }
-        const ret = await state.tesseractWorker.recognize(src); el.progressStatus.textContent = '解析完了'; el.progressPercent.textContent = '100%'; el.progressBar.style.width = '100%';
-        parseAndFillFields(ret.data.text); el.btnSaveCard.disabled = false; setTimeout(() => { el.progressContainer.style.display = 'none'; }, 2000);
-    } catch (e) { el.progressStatus.textContent = 'エラーが発生しました'; el.progressPercent.textContent = '0%'; el.progressBar.style.width = '0%'; }
+        const ret = await state.tesseractWorker.recognize(src);
+        el.progressStatus.textContent = '解析完了';
+        el.progressPercent.textContent = '100%';
+        el.progressBar.style.width = '100%';
+        parseAndFillFields(ret.data.text);
+        el.btnSaveCard.disabled = false;
+        setTimeout(() => { el.progressContainer.style.display = 'none'; }, 2000);
+    } catch (e) {
+        el.progressStatus.textContent = 'エラーが発生しました';
+        el.progressPercent.textContent = '0%';
+        el.progressBar.style.width = '0%';
+    }
 }
 function parseAndFillFields(text) {
     const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-    ['Company', 'Name', 'Landline', 'Mobile', 'Email', 'Zip', 'Address'].forEach(f => { if (el[`edit${f}`]) el[`edit${f}`].value = ''; if (el[`raw${f}`]) el[`raw${f}`].textContent = '-'; });
-    const em = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/, mb = /(090|080|070)-\d{4}-\d{4}|(090|080|070)\d{8}/, ll = /0\d{1,4}-\d{1,4}-\d{4}/, zp = /〒?\s?\d{3}-\d{4}/;
+    ['Company', 'Name', 'Landline', 'Mobile', 'Email', 'Zip', 'Address'].forEach(f => {
+        if (el[`edit${f}`]) el[`edit${f}`].value = '';
+        if (el[`raw${f}`]) el[`raw${f}`].textContent = '-';
+    });
+    const em = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
+    const mb = /(090|080|070)-\d{4}-\d{4}|(090|080|070)\d{8}/;
+    const ll = /0\d{1,4}-\d{1,4}-\d{4}/;
+    const zp = /〒?\s?\d{3}-\d{4}/;
     lines.forEach(l => {
         if (em.test(l)) { const m = l.match(em); if(el.editEmail) el.editEmail.value = m; if(el.rawEmail) el.rawEmail.textContent = m; }
         else if (mb.test(l)) { const m = l.match(mb); if(el.editMobile) el.editMobile.value = m; if(el.rawMobile) el.rawMobile.textContent = m; }
         else if (ll.test(l)) { const m = l.match(ll); if(el.editLandline) el.editLandline.value = m; if(el.rawLandline) el.rawLandline.textContent = m; }
         else if (zp.test(l)) { const m = l.match(zp); if(el.editZip) el.editZip.value = m; if(el.rawZip) el.rawZip.textContent = m; }
     });
-    if (lines.length > 0 && el.editName) { el.editName.value = lines[0]; el.rawName.textContent = lines[0]; }
-    if (lines.length > 1 && el.editCompany) { el.editCompany.value = lines[1]; el.rawCompany.textContent = lines[1]; }
+    if (lines.length > 0 && el.editName) { el.editName.value = lines; el.rawName.textContent = lines; }
+    if (lines.length > 1 && el.editCompany) { el.editCompany.value = lines; el.rawCompany.textContent = lines; }
 }
+
 async function updateHistoryList() {
-    const cards = await state.db.getAllCards(); el.historyCount.textContent = `${cards.length} 件`;
-    if (cards.length === 0) { el.historyList.innerHTML = '<div class="empty-state"><p>保存された名刺はありません</p></div>'; el.btnExportZip.disabled = true; el.btnClearHistory.disabled = true; return; }
-    el.btnExportZip.disabled = false; el.btnClearHistory.disabled = false; el.historyList.innerHTML = '';
-    cards.forEach(c => { const item = document.createElement('div'); item.className = 'history-item'; item.innerHTML = `<div><strong>${c.name || '名前なし'}</strong><br><small>${c.company || '会社名なし'}</small></div>`; el.historyList.appendChild(item); });
+    const cards = await state.db.getAllCards();
+    el.historyCount.textContent = `${cards.length} 件`;
+    if (cards.length === 0) {
+        el.historyList.innerHTML = '<div class="empty-state"><p>保存された名刺はありません</p></div>';
+        el.btnExportZip.disabled = true;
+        el.btnClearHistory.disabled = true;
+        return;
+    }
+    el.btnExportZip.disabled = false;
+    el.btnClearHistory.disabled = false;
+    el.historyList.innerHTML = '';
+    cards.forEach(c => {
+        const item = document.createElement('div');
+        item.className = 'history-item';
+        item.innerHTML = `<div><strong>${c.name || '名前なし'}</strong><br><small>${c.company || '会社名なし'}</small></div>`;
+        el.historyList.appendChild(item);
+    });
 }
+
 async function saveCurrentCard() {
-    await state.db.saveCard({ id: Date.now().toString(), company: el.editCompany.value, name: el.editName.value, landline: el.editLandline.value, mobile: el.editMobile.value, email: el.editEmail.value, zip: el.editZip.value, address: el.editAddress.value, memo: el.editMemo.value, image: state.currentCaptureBase64, createdAt: Date.now() });
-    await updateHistoryList(); alert('保存しました！');
+    await state.db.saveCard({
+        id: Date.now().toString(), company: el.editCompany.value, name: el.editName.value,
+        landline: el.editLandline.value, mobile: el.editMobile.value, email: el.editEmail.value,
+        zip: el.editZip.value, address: el.editAddress.value, memo: el.editMemo.value,
+        image: state.currentCaptureBase64, createdAt: Date.now()
+    });
+    await updateHistoryList();
+    alert('保存しました！');
 }
-async function clearHistory() { if(confirm('すべての履歴を削除しますか？')) { await state.db.clearAll(); await updateHistoryList(); } }
+
+async function clearHistory() {
+    if(confirm('すべての履歴を削除しますか？')) {
+        await state.db.clearAll();
+        await updateHistoryList();
+    }
+}
